@@ -1,0 +1,8 @@
+# Ignore raw data directory
+data/
+
+# Ignore generated CSV files
+medical_reviews.csv
+
+# Ignore Python virtual environment
+.venv/
