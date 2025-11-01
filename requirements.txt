@@ -1,0 +1,22 @@
+# --- Core Data Handling & NLP ---
+pandas
+numpy
+tqdm
+
+# --- Sentiment & Emotion ---
+vaderSentiment
+spacy
+transformers
+torch
+
+# --- Topic Modeling (from your original files) ---
+bertopic
+umap-learn
+
+# --- Plotting & Interpretation ---
+matplotlib
+seaborn
+scikit-learn
+
+# --- Data Downloading ---
+kagglehub

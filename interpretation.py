@@ -2,151 +2,118 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from collections import Counter
-from sklearn.cluster import KMeans
 import numpy as np
 
 # Style
 sns.set(style="whitegrid")
 plt.rcParams["figure.figsize"] = (10, 6)
 
-# Load the processed file
-df = pd.read_csv("final_adjusted_ratings.csv")
+# --- Load New Data Files ---
+try:
+    aspect_df = pd.read_csv("aspect_level_emotion_analysis.csv")
+    ratings_df = pd.read_csv("final_absa_adjusted_ratings.csv")
+except FileNotFoundError:
+    print("Error: Could not find 'aspect_level_emotion_analysis.csv' or 'final_absa_adjusted_ratings.csv'")
+    print("Please make sure both files are in the same directory.")
+    exit()
+
+print("Data loaded. Generating new visualizations...")
 
 # ===============================
-# 📊 1. Boxplot: Original vs Adjusted Ratings
+# 📊 1. Boxplot: Original vs NEW ABSA-Adjusted Rating
 # ===============================
 plt.figure()
-sns.boxplot(data=df[['stars', 'adjusted_rating']])
-plt.title("📊 Distribution: Original vs Adjusted Ratings")
+# We only want to plot the reviews that actually *changed*
+changed_df = ratings_df[ratings_df['stars'] != ratings_df['absa_adjusted_rating']]
+sns.boxplot(data=changed_df[['stars', 'absa_adjusted_rating']])
+plt.title("📊 Distribution: Original vs NEW ABSA-Adjusted Ratings (Mismatched Only)")
 plt.ylabel("Rating")
-plt.xticks([0, 1], ['Original', 'Adjusted'])
+plt.xticks([0, 1], ['Original Rating', 'ABSA-Adjusted Rating'])
 plt.tight_layout()
-plt.savefig("1_boxplot_original_vs_adjusted.png")
-plt.show()
+plt.savefig("1_absa_boxplot_original_vs_adjusted.png")
+print("Saved: 1_absa_boxplot_original_vs_adjusted.png")
 
 # ===============================
-# 📊 2. Bar Chart: Top 10 Emotions in Mismatches
+# 🔁 2. Rating Change Distribution (New ABSA Rating)
 # ===============================
-mismatch_df = df[df['sentiment_mismatch']]
-emotion_series = mismatch_df['top_emotions'].dropna().str.split(', ')
-flat_emotions = [e.strip().lower() for sublist in emotion_series for e in sublist]
-emotion_counts = Counter(flat_emotions)
-top_emotions_df = pd.DataFrame(emotion_counts.items(), columns=['emotion', 'count']).sort_values(by='count', ascending=False)
+ratings_df['rating_change'] = ratings_df['absa_adjusted_rating'] - ratings_df['stars']
+ratings_df['rating_change_status'] = ratings_df['rating_change'].apply(
+    lambda x: 'Increased' if x > 0 else 'Decreased' if x < 0 else 'Same'
+)
 
 plt.figure()
-sns.barplot(x='count', y='emotion', data=top_emotions_df.head(10), palette="viridis")
-plt.title("💥 Top 10 Emotions in Sentiment Mismatches")
-plt.xlabel("Frequency")
-plt.ylabel("Emotion")
-plt.tight_layout()
-plt.savefig("2_top_emotions_bar.png")
-plt.show()
-
-# ===============================
-# 🌡 3. Heatmap: VADER Sentiment vs Emotion (Mismatched)
-# ===============================
-exploded = mismatch_df.copy()
-exploded['emotion'] = exploded['top_emotions'].str.split(', ')
-exploded = exploded.explode('emotion')
-exploded['emotion'] = exploded['emotion'].str.lower().str.strip()
-
-heatmap_data = pd.crosstab(exploded['vader_sentiment'], exploded['emotion'])
-
-plt.figure(figsize=(14, 6))
-sns.heatmap(heatmap_data, cmap="YlGnBu", linewidths=0.5)
-plt.title("🌡 Heatmap: Emotion vs Sentiment (Mismatched Only)")
-plt.xlabel("Emotion")
-plt.ylabel("VADER Sentiment")
-plt.tight_layout()
-plt.savefig("3_heatmap_emotion_sentiment.png")
-plt.show()
-
-# ===============================
-# 🔁 4. Rating Change Distribution
-# ===============================
-df['rating_change'] = df['adjusted_rating'] - df['stars']
-df['rating_change_status'] = df['rating_change'].apply(lambda x: 'Increased' if x > 0 else 'Decreased' if x < 0 else 'Same')
-
-plt.figure()
-sns.countplot(x='rating_change_status', data=df[df['sentiment_mismatch']], palette="Set2")
-plt.title("🔁 Rating Change Summary (Mismatched Only)")
-plt.xlabel("Change Type")
+# We only care about the mismatched reviews that had an adjustment
+sns.countplot(
+    x='rating_change_status', 
+    data=ratings_df[ratings_df['sentiment_mismatch'] == True], 
+    order=['Increased', 'Decreased', 'Same'],
+    palette="Set2"
+)
+plt.title("🔁 Rating Change Summary (Mismatched Reviews Only)")
+plt.xlabel("Change Type (Original vs. ABSA-Adjusted)")
 plt.ylabel("Number of Reviews")
 plt.tight_layout()
-plt.savefig("4_rating_change_summary.png")
-plt.show()
+plt.savefig("2_absa_rating_change_summary.png")
+print("Saved: 2_absa_rating_change_summary.png")
 
 # ===============================
-# ⚖️ 5. Scatter Plot: Original vs Adjusted Ratings
+# 🌟 3. (NOVEL) Top Aspects in 5-Star Negative Mismatches
 # ===============================
-plt.figure()
-sns.scatterplot(x='stars', y='adjusted_rating', data=df[df['sentiment_mismatch']], alpha=0.6, color="purple")
-plt.plot([1, 5], [1, 5], 'r--', label='No Change Line')
-plt.title("⚖️ Original vs Adjusted Ratings (Sentiment Mismatches)")
-plt.xlabel("Original Rating")
-plt.ylabel("Adjusted Rating")
-plt.legend()
+# Find 5-star reviews that VADER labeled Negative (a clear mismatch)
+mismatch_5star_ids = ratings_df[
+    (ratings_df['stars'] >= 4) & (ratings_df['vader_sentiment'] == 'Negative')
+].index
+
+# Filter aspect_df for these specific reviews
+mismatch_5star_aspects = aspect_df[aspect_df['review_id'].isin(mismatch_5star_ids)]
+
+# Explode emotions
+mismatch_5star_aspects['emotion'] = mismatch_5star_aspects['sentence_top_emotions'].str.split(', ')
+exploded_5star = mismatch_5star_aspects.explode('emotion')
+
+# Find aspects linked to strong negative emotions
+neg_emo_aspects = exploded_5star[
+    exploded_5star['emotion'].isin(['anger', 'disgust', 'sadness', 'fear', 'disappointment', 'annoyance'])
+]
+top_neg_aspects = neg_emo_aspects['aspect'].value_counts().head(15)
+
+plt.figure(figsize=(10, 8))
+sns.barplot(y=top_neg_aspects.index, x=top_neg_aspects.values, palette="Reds_r")
+plt.title("😡 Top 15 Aspects Linked to NEGATIVE Emotions in 4-5 Star Reviews")
+plt.xlabel("Frequency of Aspect")
+plt.ylabel("Aspect")
 plt.tight_layout()
-plt.savefig("5_scatter_original_vs_adjusted.png")
-plt.show()
+plt.savefig("3_absa_top_neg_aspects_in_high_ratings.png")
+print("Saved: 3_absa_top_neg_aspects_in_high_ratings.png")
 
 # ===============================
-# ✅ 6A. Clustering Based on Sentiment–Rating Gap
+# 🌟 4. (NOVEL) Top Aspects in 1-Star Positive Mismatches
 # ===============================
-df['normalized_stars'] = (df['stars'] - 1) / 4
-sentiment_map = {'Positive': 1, 'Neutral': 0, 'Negative': -1}
-df['sentiment_score'] = df['vader_sentiment'].map(sentiment_map)
-df['intensity_gap'] = df['sentiment_score'] - df['normalized_stars']
+# Find 1/2-star reviews that VADER labeled Positive (a clear mismatch)
+mismatch_1star_ids = ratings_df[
+    (ratings_df['stars'] <= 2) & (ratings_df['vader_sentiment'] == 'Positive')
+].index
 
-X = df[['sentiment_score', 'normalized_stars', 'intensity_gap']].fillna(0)
-kmeans = KMeans(n_clusters=3, random_state=42).fit(X)
-df['cluster'] = kmeans.labels_
+# Filter aspect_df for these specific reviews
+mismatch_1star_aspects = aspect_df[aspect_df['review_id'].isin(mismatch_1star_ids)]
 
-# ===============================
-# ✅ 6B. Scatter Plot: Cluster View
-# ===============================
-plt.figure()
-sns.scatterplot(data=df, x='normalized_stars', y='sentiment_score', hue='cluster', palette="Set1")
-plt.title("🔍 Star Rating vs Sentiment Score (KMeans Clusters)")
-plt.xlabel("Normalized Star Rating")
-plt.ylabel("Sentiment Score")
+# Explode emotions
+mismatch_1star_aspects['emotion'] = mismatch_1star_aspects['sentence_top_emotions'].str.split(', ')
+exploded_1star = mismatch_1star_aspects.explode('emotion')
+
+# Find aspects linked to strong positive emotions
+pos_emo_aspects = exploded_1star[
+    exploded_1star['emotion'].isin(['joy', 'gratitude', 'admiration', 'approval', 'caring', 'love'])
+]
+top_pos_aspects = pos_emo_aspects['aspect'].value_counts().head(15)
+
+plt.figure(figsize=(10, 8))
+sns.barplot(y=top_pos_aspects.index, x=top_pos_aspects.values, palette="Greens_r")
+plt.title("😊 Top 15 Aspects Linked to POSITIVE Emotions in 1-2 Star Reviews")
+plt.xlabel("Frequency of Aspect")
+plt.ylabel("Aspect")
 plt.tight_layout()
-plt.savefig("6a_cluster_scatter.png")
-plt.show()
+plt.savefig("4_absa_top_pos_aspects_in_low_ratings.png")
+print("Saved: 4_absa_top_pos_aspects_in_low_ratings.png")
 
-# ===============================
-# ✅ 6C. % of High Star Reviews with Strong Negative Emotions
-# ===============================
-high_star = df[df['stars'] >= 4].copy()
-high_star['emotion_list'] = high_star['top_emotions'].str.lower().str.split(', ')
-high_star['has_neg_emotion'] = high_star['emotion_list'].apply(
-    lambda x: any(em.strip() in ['anger', 'sadness', 'fear', 'disgust'] for em in x)
-)
-neg_percent = (high_star['has_neg_emotion'].sum() / len(high_star)) * 100
-
-plt.figure()
-sns.barplot(x=['4–5 Star Reviews'], y=[neg_percent], palette="Reds")
-plt.ylabel('% with Anger/Sadness/Fear')
-plt.title("😡 % of 4–5 Star Reviews with Strong Negative Emotions")
-plt.tight_layout()
-plt.savefig("6b_high_star_neg_emotion_percent.png")
-plt.show()
-
-# ===============================
-# ✅ 7. Insight Reporting
-# ===============================
-five_star = df[df['stars'] == 5]
-five_star['has_negative'] = five_star['top_emotions'].str.lower().str.contains('anger|sadness|fear|disgust')
-percent_5star_neg = five_star['has_negative'].mean() * 100
-print(f"📌 {percent_5star_neg:.2f}% of 5-star reviews contain strong negative emotions.")
-
-# If 'service_type' exists in the dataset
-if 'service_type' in df.columns:
-    exploded['service_type'] = df.set_index('text').loc[exploded['text'], 'service_type'].values
-    service_emotion = exploded.groupby('service_type')['emotion'].apply(lambda x: Counter(x).most_common(1)[0][0])
-    print("\n📊 Dominant emotion per service:")
-    print(service_emotion)
-
-top_mismatch_emotions = exploded[exploded['sentiment_mismatch']]['emotion'].value_counts().head(5)
-print("\n🚨 Top 5 emotions in mismatched reviews:")
-print(top_mismatch_emotions)
+print("\n✅ All new visualizations saved! Check your project folder.")

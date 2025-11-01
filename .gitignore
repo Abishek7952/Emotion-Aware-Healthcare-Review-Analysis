@@ -7,3 +7,4 @@ medical_reviews.csv
 
 # Ignore Python virtual environment
 .venv/
+venv
