@@ -1,43 +1,61 @@
 import pandas as pd
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+from tqdm import tqdm
 
-# Load the medical reviews
-df = pd.read_csv(r"D:\NLP\medical_reviews.csv")
-
-# Initialize VADER
+# Setup VADER
 analyzer = SentimentIntensityAnalyzer()
+tqdm.pandas()
 
-# Apply VADER sentiment analysis
-def get_sentiment_label(text):
-    score = analyzer.polarity_scores(text)['compound']
-    if score >= 0.05:
-        return 'Positive'
-    elif score <= -0.05:
-        return 'Negative'
+# Load data
+print("Loading medical_reviews.csv...")
+try:
+    df = pd.read_csv("medical_reviews.csv")
+except FileNotFoundError:
+    print("Error: medical_reviews.csv not found. Please run filter medical reviews.py first.")
+    exit()
+
+df['text'] = df['text'].astype(str)
+
+# Function to get VADER label and compound score
+def get_vader_scores(text):
+    scores = analyzer.polarity_scores(text)
+    compound = scores['compound']
+    
+    if compound >= 0.05:
+        label = 'Positive'
+    elif compound <= -0.05:
+        label = 'Negative'
     else:
-        return 'Neutral'
+        label = 'Neutral'
+    
+    # Return both the label AND the raw compound score
+    return label, compound
 
-print("Analyzing sentiments...")
-df['vader_sentiment'] = df['text'].astype(str).apply(get_sentiment_label)
+# Apply the function
+print("Running VADER analysis...")
+# This creates two new columns from the two outputs
+df[['vader_sentiment', 'vader_compound']] = df['text'].progress_apply(
+    lambda text: pd.Series(get_vader_scores(text))
+)
 
-# Map star ratings to general labels
-def star_to_label(stars):
+# Function to get rating label
+def get_rating_label(stars):
     if stars >= 4:
         return 'Positive'
-    elif stars == 3:
-        return 'Neutral'
-    else:
+    elif stars < 3:
         return 'Negative'
+    else:
+        return 'Neutral'
 
-df['rating_sentiment'] = df['stars'].apply(star_to_label)
+df['rating_sentiment'] = df['stars'].apply(get_rating_label)
 
 # Find mismatches
 df['sentiment_mismatch'] = df['vader_sentiment'] != df['rating_sentiment']
 
-# Save to a new CSV
-output_path = r"D:\NLP\medical_sentiment_mismatch.csv"
-df.to_csv(output_path, index=False)
+# Save output
+output_file = "medical_sentiment_mismatch.csv"
+# We save with index=False to keep the file clean
+df.to_csv(output_file, index=False)
 
-print(f"Analysis complete. Results saved to: {output_path}")
-print("Sample mismatches:")
-print(df[df['sentiment_mismatch']].head())
+print(f"\n✅ Success! Sentiment analysis complete.")
+print(f"New file saved to: {output_file}")
