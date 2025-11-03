@@ -13,14 +13,20 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 BATCH_SIZE = 32
 # ----------------------------
 
-# ❗❗ --- THIS IS THE NEW "BRAIN" --- ❗❗
-# We define our domain-specific keywords.
-# This is much smarter than the old grammar rules.
-ASPECT_KEYWORDS = {
+# ❗❗ --- THE NEW HIERARCHICAL "BRAIN" --- ❗❗
+# We search for "Entities" first. If we find one, we stop.
+# This prevents a "rude doctor" from being tagged as both 'Doctor' and 'Communication'.
+
+# Priority 1: The "Who" (Entities)
+ENTITY_KEYWORDS = {
     'Doctor': ['doctor', 'dr', 'physician', 'surgeon', 'specialist', 'md'],
     'Staff': ['staff', 'receptionist', 'front desk', 'nurse', 'nurses', 'admin', 'assistant'],
+    'Billing': ['bill', 'billing', 'cost', 'price', 'insurance', 'charge', 'charged', 'payment', 'expensive']
+}
+
+# Priority 2: The "What/Where" (Topics)
+TOPIC_KEYWORDS = {
     'Wait Time': ['wait', 'waiting', 'long', 'hour', 'hours', 'appointment', 'schedule', 'punctual'],
-    'Billing': ['bill', 'billing', 'cost', 'price', 'insurance', 'charge', 'charged', 'payment', 'expensive'],
     'Communication': ['explained', 'listened', 'answered', 'questions', 'communication', 'rude', 'friendly'],
     'Facility': ['facility', 'office', 'clinic', 'building', 'clean', 'dirty', 'parking', 'room']
 }
@@ -41,7 +47,6 @@ print(f"Total reviews: {len(df)}, Mismatched reviews to analyze: {len(mismatch_d
 
 # Load Models
 print("Loading spaCy model (for sentence splitting)...")
-# We only use spaCy to split text into sentences
 nlp = spacy.load("en_core_web_sm", disable=["tagger", "parser", "ner", "lemmatizer"])
 nlp.add_pipe('sentencizer')
 
@@ -72,26 +77,34 @@ def get_top_emotions_batch(texts, top_n=3):
         top_emotions_list.append(', '.join(emotions))
     return top_emotions_list
 
-# --- Aspect Extraction Function (NEW) ---
+# --- Aspect Extraction Function (NEW HIERARCHY) ---
 def extract_keyword_aspects(text):
-    """
-    Finds sentences that contain our keywords.
-    Returns a dictionary of {Aspect: [list of sentences]}
-    """
     doc = nlp(text)
-    aspect_sentences = {key: [] for key in ASPECT_KEYWORDS}
+    aspect_sentences = {} # We'll build this dynamically
     
     for sent in doc.sents:
         sent_text = sent.text.lower()
-        found_aspect = False
-        for aspect_name, keywords in ASPECT_KEYWORDS.items():
-            # Use regex to find whole words
+        found_aspect = None
+        
+        # Priority 1: Check for Entities
+        for aspect_name, keywords in ENTITY_KEYWORDS.items():
             if any(re.search(r'\b' + re.escape(kw) + r'\b', sent_text) for kw in keywords):
-                aspect_sentences[aspect_name].append(sent.text)
-                found_aspect = True
-                # Optional: break after first match to avoid one sentence
-                # being tagged as both 'Doctor' and 'Staff'
-                break 
+                found_aspect = aspect_name
+                break # Found the most important aspect, stop checking
+        
+        # Priority 2: Check for Topics *only if* no Entity was found
+        if not found_aspect:
+            for aspect_name, keywords in TOPIC_KEYWORDS.items():
+                if any(re.search(r'\b' + re.escape(kw) + r'\b', sent_text) for kw in keywords):
+                    found_aspect = aspect_name
+                    break # Found the topic, stop checking
+        
+        # If we found any aspect, add it to our list
+        if found_aspect:
+            if found_aspect not in aspect_sentences:
+                aspect_sentences[found_aspect] = []
+            aspect_sentences[found_aspect].append(sent.text)
+            
     return aspect_sentences
 
 
@@ -101,11 +114,8 @@ results_list = []
 
 for index, row in tqdm(mismatch_df.iterrows(), total=mismatch_df.shape[0]):
     text = str(row['text'])
-    
-    # 1. Find all sentences related to our aspects
     aspect_sentences_map = extract_keyword_aspects(text)
     
-    # 2. Batch-analyze all found sentences
     all_sentences = []
     all_aspects = []
     for aspect_name, sentences in aspect_sentences_map.items():
@@ -116,17 +126,15 @@ for index, row in tqdm(mismatch_df.iterrows(), total=mismatch_df.shape[0]):
     if not all_sentences:
         continue
 
-    # 3. Get emotions for this review's sentences
     try:
         top_emotions = get_top_emotions_batch(all_sentences, top_n=3)
     except Exception as e:
         print(f"Error processing batch: {e}")
         continue
     
-    # 4. Save the clean results
     for i, aspect_name in enumerate(all_aspects):
         results_list.append({
-            'review_id': row['original_index'], # The correct, original ID
+            'review_id': row['original_index'], 
             'stars': row['stars'],
             'vader_sentiment': row['vader_sentiment'],
             'aspect': aspect_name, # The CLEAN aspect (e.g., "Doctor", "Staff")
@@ -140,7 +148,5 @@ if results_list:
     final_aspect_df.to_csv(OUTPUT_CSV, index=False)
     print(f"\n✅ Success! Aspect-level emotion analysis complete.")
     print(f"New, clean data saved to: {OUTPUT_CSV}")
-    print("\nSample Output (Notice the clean 'aspect' column):")
-    print(final_aspect_df.head())
 else:
     print("\nNo aspects were extracted from the mismatched reviews.")

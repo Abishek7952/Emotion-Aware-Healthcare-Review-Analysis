@@ -5,7 +5,7 @@ from itertools import product
 from collections import Counter
 from tqdm import tqdm
 
-print("--- Starting Conflict Pair Analysis (V4 - Final Fix) ---")
+print("--- Starting Conflict Pair Analysis (V5 - Final Filter) ---")
 
 # --- 1. Define Emotion Categories ---
 POSITIVE_EMOTIONS = {'joy', 'gratitude', 'love', 'admiration', 'approval', 'caring', 'excitement', 'optimism', 'relief', 'pride'}
@@ -17,12 +17,9 @@ try:
     aspect_df = pd.read_csv("aspect_level_emotion_analysis.csv")
     review_df = pd.read_csv("medical_sentiment_mismatch.csv")
     
-    # Drop polluted 'review_id' if it exists
     if 'review_id' in review_df.columns:
-        print("Found and dropping polluted 'review_id' column...")
         review_df = review_df.drop(columns=['review_id'])
     
-    # Create the correct, unique review_id
     review_df = review_df.reset_index().rename(columns={'index': 'review_id'})
     
 except FileNotFoundError:
@@ -31,19 +28,13 @@ except FileNotFoundError:
 
 # --- 3. Merge Data ---
 print("Merging dataframes...")
-# We merge on the 'review_id' that is now correct in both files
 merged_df = pd.merge(
     aspect_df,
-    review_df, # We can merge the whole df now
+    review_df, 
     on='review_id'
 )
 
 # --- 4. Filter for "Hidden Conflict" Reviews ---
-#
-# ❗❗❗ THIS IS THE FIX ❗❗❗
-# We are now using 'stars_x' and 'vader_sentiment_x'
-# These are the columns from the LEFT dataframe (aspect_df)
-#
 conflict_reviews_df = merged_df[
     (merged_df['stars_x'] >= 4) &
     (merged_df['vader_sentiment_x'] == 'Negative')
@@ -73,7 +64,17 @@ for review_id, group in tqdm(grouped):
     
     if positive_aspects and negative_aspects:
         pairs = list(product(positive_aspects, negative_aspects))
-        standardized_pairs = [tuple(sorted(pair)) for pair in pairs]
+        
+        #
+        # ❗❗❗ THIS IS THE FINAL FIX ❗❗❗
+        # We only count pairs where the aspects are DIFFERENT.
+        # This filters out ('Doctor', 'Doctor') and keeps ('Doctor', 'Billing').
+        #
+        standardized_pairs = []
+        for pair in pairs:
+            if pair[0] != pair[1]: # This is the new rule!
+                standardized_pairs.append(tuple(sorted(pair)))
+
         all_conflict_pairs.update(standardized_pairs)
 
 print("\n--- 🏆 Top 20 Conflict Archetypes ---")
